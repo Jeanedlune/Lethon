@@ -13,6 +13,8 @@ from typing import Dict, Any, Tuple, Optional, List
 import numpy as np
 
 from lethon.core.spectral.fft_filter import spectral_token_saliency_prune
+from lethon.core.anchor.aggregator import compute_anchor_indices
+from lethon.core.subspace.masking import compute_subspace_projection_mask
 from lethon.utils.tokenizer import estimate_token_count
 
 
@@ -92,25 +94,44 @@ class LethonPipeline:
         features = self._extract_text_features(lines)
         features_batch = np.expand_dims(features, axis=0)
 
-        # Spectral filter pass
+        # Stage 1: Fast Spectral Filter Pass (arXiv:2508.06038)
         spectral_ratio = min(1.0, compression_ratio * 1.3)
         _, spectral_indices = spectral_token_saliency_prune(
             features_batch, retention_ratio=spectral_ratio
         )
-        kept_indices = set(spectral_indices[0].tolist())
+        spectral_candidates = set(spectral_indices[0].tolist())
 
-        # RLPT Subspace Masking: Strictly lock critical code structures
-        anchor_indices = set()
+        # Stage 2: Semantic Anchor Selection (arXiv:2510.08907)
+        sac_anchor_indices = set(compute_anchor_indices(
+            seq_len=num_lines,
+            compression_ratio=max(1.0, 1.0 / max(0.05, compression_ratio)),
+            strategy="uniform"
+        ).tolist())
+
+        # Stage 3: Low-Rank Subspace Masking via Truncated SVD (arXiv:2602.03195)
+        subspace_mask, _, _ = compute_subspace_projection_mask(
+            hidden_states=features,
+            energy_threshold=0.85
+        )
+        subspace_promising_indices = set(np.where(subspace_mask > 0)[0].tolist())
+
+        # Syntax Invariant Protection
+        syntax_anchors = set()
         for idx, line in enumerate(lines):
             # Signatures, imports, decorators
             if re.match(r'^\s*(#|//|/\*|import|from|use\s+|class\s+|def\s+|pub\s+|fn\s+|function\s+|async\s+|struct\s+|enum\s+|trait\s+|impl\s+|type\s+|@)', line):
-                anchor_indices.add(idx)
+                syntax_anchors.add(idx)
             # Critical closing brackets & control terminators
             stripped = line.strip()
             if stripped in {"}", "};", "])", "]", ")", "else:", "finally:"}:
-                anchor_indices.add(idx)
+                syntax_anchors.add(idx)
 
-        final_candidates = kept_indices.union(anchor_indices)
+        # Unified anchor candidates (SAC anchors + Syntax Invariants)
+        anchor_indices = syntax_anchors.union(sac_anchor_indices)
+
+        # Merge spectral candidates and subspace promising candidates
+        content_candidates = spectral_candidates.union(subspace_promising_indices)
+        final_candidates = content_candidates.union(anchor_indices)
         final_indices = sorted(list(final_candidates))
 
         if len(final_indices) > target_lines:
