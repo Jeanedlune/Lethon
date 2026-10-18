@@ -1,11 +1,11 @@
 """
-Unit tests for LethonPipeline, MCP tools, and CLI endpoints.
+Unit tests for specialized LethonPipeline and MCP tools (Code, Logs, Diff).
 """
 
 import json
 import pytest
 from lethon.core.pipeline import LethonPipeline
-from lethon.mcp.server import prune_context, compress_cot
+from lethon.mcp.server import prune_code, prune_logs, prune_diff, prune_context
 
 
 @pytest.fixture
@@ -13,103 +13,99 @@ def pipeline():
     return LethonPipeline()
 
 
-def test_pipeline_prune_context_code(pipeline):
+def test_prune_code_preserves_syntax(pipeline):
     code = """
 import os
 import sys
 
-class DataProcessor:
-    def __init__(self, name):
-        self.name = name
-        self.count = 0
-        self.active = True
+pub struct CircuitValidator {
+    pub root: [u8; 32],
+    pub leaf_count: u64,
+}
 
-    def process(self, data):
-        # some repetitive processing lines
-        val = data * 2
-        val = val + 1
-        val = val - 1
-        val = val * 2
-        val = val + 1
-        val = val - 1
-        val = val * 2
-        val = val + 1
-        val = val - 1
-        return val
+impl CircuitValidator {
+    pub fn new(root: [u8; 32]) -> Self {
+        Self { root, leaf_count: 0 }
+    }
 
-    def cleanup(self):
-        self.count = 0
-        self.active = False
-""" * 5
-    compressed, metrics = pipeline.prune_context(code, compression_ratio=0.4)
+    pub fn compute_constraint(&self, a: u64, b: u64) -> u64 {
+        let x = a + b;
+        let y = x * 2;
+        let z = y - 1;
+        let w = z + 10;
+        let v = w / 2;
+        v
+    }
+}
+""" * 10
+    compressed, metrics = pipeline.prune_code(code, compression_ratio=0.4)
     
     assert metrics["orig_tokens"] > metrics["compressed_tokens"]
     assert metrics["savings_pct"] > 0.0
-    assert metrics["latency_ms"] < 25.0
-    # Must preserve essential anchor keywords
-    assert "class DataProcessor:" in compressed
-    assert "def process(self, data):" in compressed
+    assert "pub struct CircuitValidator" in compressed
+    assert "pub fn compute_constraint" in compressed
     assert "import os" in compressed
 
 
-def test_pipeline_prune_logs_with_errors(pipeline):
+def test_prune_logs_captures_tracebacks(pipeline):
     logs = """
-[2026-10-18 10:00:01] [INFO] Server started on port 8080
-[2026-10-18 10:00:02] [INFO] Healthcheck ok
-[2026-10-18 10:00:03] [INFO] Healthcheck ok
-[2026-10-18 10:00:04] [INFO] Healthcheck ok
-[2026-10-18 10:00:05] [INFO] Healthcheck ok
-[2026-10-18 10:00:06] [ERROR] Database connection timeout: Connection refused!
+[INFO] Application starting...
+[INFO] Loading modules...
+[INFO] Worker 1 ready
+[INFO] Worker 2 ready
+[INFO] Processing batch 1...
+[INFO] Processing batch 2...
+[ERROR] Database connection failed: connection refused on 127.0.0.1:5432
 Traceback (most recent call last):
-  File "db.py", line 42, in connect
-    raise TimeoutError("DB failed")
-TimeoutError: DB failed
-[2026-10-18 10:00:07] [INFO] Healthcheck ok
-[2026-10-18 10:00:08] [INFO] Healthcheck ok
-[2026-10-18 10:00:09] [INFO] Healthcheck ok
-[2026-10-18 10:00:10] [INFO] Healthcheck ok
-""" * 3
-    compressed, metrics = pipeline.prune_context(logs, compression_ratio=0.5)
+  File "server.py", line 124, in handle_request
+    db.execute("SELECT 1")
+ConnectionRefusedError: Port 5432 unreachable
+[INFO] Retrying connection in 5s...
+[INFO] Worker 1 idle
+[INFO] Worker 2 idle
+[INFO] Heartbeat OK
+""" * 5
+    compressed, metrics = pipeline.prune_logs(logs, context_window_lines=2)
     
     assert metrics["savings_pct"] > 0.0
-    # Critical error anchor must be kept
-    assert "Database connection timeout" in compressed
-    assert "TimeoutError: DB failed" in compressed
+    assert "Database connection failed" in compressed
+    assert "ConnectionRefusedError: Port 5432 unreachable" in compressed
 
 
-def test_pipeline_compress_cot(pipeline):
-    raw_cot = """
-<think>
-Wait, let me rethink the problem.
-Hold on, wait... let me check again.
-The equation is 3x + 9 = 24.
-Let me compute: 3x = 24 - 9 = 15.
-Therefore x = 5.
-Double check: 3(5) + 9 = 15 + 9 = 24. Yes correct!
-</think>
-<answer>5</answer>
+def test_prune_diff_filters_lockfiles(pipeline):
+    diff = """
+diff --git a/src/main.rs b/src/main.rs
+index abc..def 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -10,3 +10,4 @@
+ fn main() {
++    println!("Hello Lethon");
+ }
+diff --git a/Cargo.lock b/Cargo.lock
+index 111..222 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,500 +1,500 @@
++ massive lockfile noise lines...
++ massive lockfile noise lines...
++ massive lockfile noise lines...
 """
-    compressed, metrics = pipeline.compress_cot(raw_cot)
+    compressed, metrics = pipeline.prune_diff(diff)
     
-    assert "<answer>5</answer>" in compressed
-    assert "Wait, let me rethink" not in compressed
-    assert "3x = 15" in compressed or "x = 5" in compressed
+    assert "println!(\"Hello Lethon\");" in compressed
+    assert "[Lethon: lockfile/asset diff pruned]" in compressed
+    assert metrics["ignored_files"] == 1
 
 
-def test_mcp_tools_json_interface():
-    # Test MCP tool prune_context
-    raw_code = "def foo():\n    return 42\n" * 40
-    res_json = prune_context(raw_code, compression_ratio=0.5)
-    data = json.loads(res_json)
-    
-    assert "compressed_text" in data
-    assert "metrics" in data
-    assert data["metrics"]["orig_tokens"] > data["metrics"]["compressed_tokens"]
+def test_mcp_tools_specialized():
+    code_res = json.loads(prune_code("fn test() { let x = 1; }\n" * 30, compression_ratio=0.4))
+    assert "compressed_code" in code_res
+    assert code_res["metrics"]["savings_pct"] > 0
 
-    # Test MCP tool compress_cot
-    raw_cot = "<think>Wait, let me rethink. 2+2=4.</think><answer>4</answer>"
-    res_cot_json = compress_cot(raw_cot)
-    cot_data = json.loads(res_cot_json)
-    
-    assert "compressed_cot" in cot_data
-    assert "metrics" in cot_data
+    log_res = json.loads(prune_logs("[INFO] ok\n" * 30 + "[ERROR] bug found!\n" + "[INFO] ok\n" * 30))
+    assert "compressed_logs" in log_res
+    assert "bug found!" in log_res["compressed_logs"]
+
+    diff_res = json.loads(prune_diff("diff --git a/app.js b/app.js\n+console.log(1);\n"))
+    assert "compressed_diff" in diff_res

@@ -1,17 +1,10 @@
 """
 Lethon Core RL Module
-Menyediakan implementasi Sequential Decision MDP & CoT Length Truncation (Stage 4)
-berdasarkan ThinkPrune (arXiv:2504.01296) dan TPRL (arXiv:2603.13394v1).
+Menyediakan implementasi Sequential Decision MDP & Token Pruning (Stage 4)
+berdasarkan TPRL (arXiv:2603.13394v1), SENT (arXiv:2512.04359v3),
+dan MAPPO Markov Game (arXiv:2503.23459).
 """
 
-from lethon.core.rl.cot_pruning import (
-    extract_answer_from_text,
-    clip_reasoning_tokens,
-    compute_thinkprune_reward,
-    compute_group_relative_advantage,
-    ThoughtRedundancyAnalyzer,
-    IterativePruningScheduler,
-)
 from lethon.core.rl.tprl import (
     TokenWiseAutoencoder,
     SharedAttentionModule,
@@ -43,12 +36,6 @@ from lethon.core.rl.mappo_pruning import (
 )
 
 __all__ = [
-    "extract_answer_from_text",
-    "clip_reasoning_tokens",
-    "compute_thinkprune_reward",
-    "compute_group_relative_advantage",
-    "ThoughtRedundancyAnalyzer",
-    "IterativePruningScheduler",
     "TokenWiseAutoencoder",
     "SharedAttentionModule",
     "TPRLPolicyNetwork",
@@ -72,4 +59,3 @@ __all__ = [
     "compute_mappo_policy_loss",
     "compute_mappo_value_loss",
 ]
-

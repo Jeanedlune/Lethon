@@ -25,7 +25,7 @@ Diperlukan arsitektur kompresi bertahap yang mampu memilah noise berfrekuensi ti
    - *Stage 1:* Fast Spectral Fourier 1D Filtering (Parameter-free $\mathcal{O}(N \log N)$).
    - *Stage 2:* Semantic-Anchor Compression (SAC) via Bidirectional Attention.
    - *Stage 3:* Dynamic Promising Token Subspace Masking (RLPT).
-   - *Stage 4:* Sequential Decision MDP & CoT Length Truncation (TPRL & ThinkPrune).
+   - *Stage 4:* Sequential Decision MDP & Token Pruning (TPRL & SENT).
 
 ## 4. Decision Outcome
 Dipilih **Option 3 (Hybrid 4-Stage Hierarchical Engine)**.
@@ -33,8 +33,8 @@ Dipilih **Option 3 (Hybrid 4-Stage Hierarchical Engine)**.
 ### Rationale:
 - Stage 1 langsung membuang 20-30% token noise berfrekuensi tinggi dalam hitungan fraksi milidetik tanpa parameter (`O(N log N)`).
 - Stage 2 mengonsolidasi representasi semantik luas ke anchor tokens sebelum masuk ke ranah keputusan token diskrit.
-- Stage 3 memecahkan kendala klasik RL (ruang aksi kosa kata terlalu besar) dengan memproyeksikan aksi ke *low-rank subspace*.
-- Stage 4 mengoptimasi panjang CoT secara adaptif berdasarkan target reward akurasi vs efisiensi.
+- Stage 3 memecahkan kendala klasik RL (ruang aksi kosa kata terlalu besar) dengan memproyeksikan aksi ke *low-rank subspace* untuk memproteksi sintaks kode.
+- Stage 4 mengoptimasi pemangkasan token konteks sekuensial secara adaptif berdasarkan target reward akurasi vs efisiensi.
 
 ## 5. Consequences & Trade-offs
 ### Positive
