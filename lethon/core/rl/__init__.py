@@ -32,6 +32,15 @@ from lethon.core.rl.entropy_regulation import (
     TokenRegularizationSchedule,
     compute_sent_policy_loss,
 )
+from lethon.core.rl.mappo_pruning import (
+    MAPPOActorNetwork,
+    MAPPOCriticNetwork,
+    compute_mappo_token_rewards,
+    apply_attention_mask_pruning,
+    compute_mappo_gae,
+    compute_mappo_policy_loss,
+    compute_mappo_value_loss,
+)
 
 __all__ = [
     "extract_answer_from_text",
@@ -55,5 +64,12 @@ __all__ = [
     "compute_token_advantage_covariance",
     "TokenRegularizationSchedule",
     "compute_sent_policy_loss",
+    "MAPPOActorNetwork",
+    "MAPPOCriticNetwork",
+    "compute_mappo_token_rewards",
+    "apply_attention_mask_pruning",
+    "compute_mappo_gae",
+    "compute_mappo_policy_loss",
+    "compute_mappo_value_loss",
 ]
 
