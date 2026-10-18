@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lethon"
+version = "0.1.0"
+description = "Spectral-RL Hybrid Context Compression Engine for Agentic AI & Long-Reasoning LLMs"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    { name = "Lethon Core Team" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "torch>=2.1.0",
+    "mcp>=1.0.0",
+    "click>=8.1.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+research = [
+    "pymupdf>=1.24.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.scripts]
+lethon = "lethon.cli.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lethon"]
