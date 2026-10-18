@@ -142,3 +142,102 @@ def fourier_compressor_2d(
     # Reshape kembali ke (B, C^2, d)
     out = np.transpose(r2, (0, 2, 3, 1)).reshape(B, target_grid_c * target_grid_c, d)
     return out
+
+
+def calculate_layer_retention_ratio(
+    layer_idx: int,
+    total_layers: int,
+    base_ratio: float = 0.25,
+    gamma: float = 2.0
+) -> float:
+    """
+    Menghitung rasio retensi adaptif per layer rho(l) sesuai temuan FourierCompress (arXiv:2510.16418).
+    Layer awal (l=1) dipangkas agresif; layer dalam (l -> L) dipangkas konservatif.
+
+    Args:
+        layer_idx: Indeks layer aktif (1-indexed, misal 1 sampai total_layers).
+        total_layers: Jumlah total layer transformer (misal 16 atau 32).
+        base_ratio: Rasio retensi dasar pada Layer 1 (0.25 = ~4x compression).
+        gamma: Eksponen kurvatur layer scheduling (default 2.0).
+
+    Returns:
+        Rasio retensi token/fitur yang diizinkan rho in [base_ratio, 1.0].
+    """
+    if total_layers <= 1:
+        return 1.0
+    normalized_depth = (layer_idx - 1) / (total_layers - 1)
+    ratio = base_ratio + (1.0 - base_ratio) * (normalized_depth ** gamma)
+    return float(np.clip(ratio, base_ratio, 1.0))
+
+
+def fourier_compress_activation_2d(
+    activation: np.ndarray,
+    seq_ratio: float = 0.36,
+    hidden_ratio: float = 0.36,
+    workers: int = -1
+) -> Tuple[np.ndarray, Tuple[int, int]]:
+    """
+    Skema D (Encoder/Client): FourierCompress 2D Spectral Activation Compression (arXiv:2510.16418).
+    Mentransformasikan aktivasi (S, D) ke domain frekuensi 2D dan memotong blok frekuensi rendah.
+
+    Args:
+        activation: Matriks aktivasi Layer 1, shape (S, D).
+        seq_ratio: Rasio frekuensi sequence yang dipertahankan rho_S (0.36 * 0.36 ~ 7.6x compression).
+        hidden_ratio: Rasio frekuensi hidden size yang dipertahankan rho_D.
+        workers: Thread CPU (-1 = all cores).
+
+    Returns:
+        core_spectrum: Blok koefisien frekuensi rendah (K_S, K_D) bernilai kompleks.
+        orig_shape: Ukuran matriks asli (S, D) untuk zero-padding di receiver.
+    """
+    S, D = activation.shape
+    K_S = max(1, int(S * seq_ratio))
+    K_D = max(1, int(D * hidden_ratio))
+
+    # 1. 2D Fast Fourier Transform
+    spectrum_2d = sfft.fft2(activation, workers=workers)
+
+    # 2. Retensi blok rectangular sudut kiri-atas (frekuensi rendah)
+    core_spectrum = spectrum_2d[:K_S, :K_D]
+
+    return core_spectrum, (S, D)
+
+
+def fourier_decompress_activation_2d(
+    core_spectrum: np.ndarray,
+    orig_shape: Tuple[int, int],
+    workers: int = -1
+) -> np.ndarray:
+    """
+    Skema D (Decoder/Server): Rekonstruksi aktivasi via Zero-Padding & 2D-IFFT.
+    Memanfaatkan simetri konjugat Hermitian A[u, v] = A*[S - u, D - v]
+    untuk sinyal riil murni.
+
+    Args:
+        core_spectrum: Blok frekuensi rendah terkompresi, shape (K_S, K_D).
+        orig_shape: Bentuk matriks asal (S, D).
+        workers: Thread CPU.
+
+    Returns:
+        reconstructed_activation: Matriks aktivasi riil berukuran penuh (S, D).
+    """
+    S, D = orig_shape
+    K_S, K_D = core_spectrum.shape
+
+    # 1. Alokasi zero-padded spectrum ukuran penuh (S, D)
+    padded_spectrum = np.zeros((S, D), dtype=np.complex128)
+    padded_spectrum[:K_S, :K_D] = core_spectrum
+
+    # 2. Pulihkan simetri konjugat Hermitian untuk koefisien riil murni:
+    # A[u, v] = A*[S - u, D - v]
+    for u in range(K_S):
+        for v in range(K_D):
+            if u == 0 and v == 0:
+                continue
+            padded_spectrum[(S - u) % S, (D - v) % D] = np.conj(core_spectrum[u, v])
+
+    # 3. 2D Inverse Fast Fourier Transform & ekstraksi komponen riil
+    reconstructed = sfft.ifft2(padded_spectrum, workers=workers)
+    return np.real(reconstructed).astype(np.float32)
+
+

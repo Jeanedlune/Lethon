@@ -4,6 +4,9 @@ from lethon.core.spectral import (
     spectral_filter_1d_downsample,
     spectral_token_saliency_prune,
     fourier_compressor_2d,
+    calculate_layer_retention_ratio,
+    fourier_compress_activation_2d,
+    fourier_decompress_activation_2d,
 )
 
 
@@ -34,6 +37,36 @@ class TestSpectralFiltering(unittest.TestCase):
         out = fourier_compressor_2d(x, target_grid_c=C)
         self.assertEqual(out.shape, (B, C * C, d))
 
+    def test_calculate_layer_retention_ratio(self):
+        # Layer 1 should equal base_ratio (0.25)
+        r_l1 = calculate_layer_retention_ratio(layer_idx=1, total_layers=16, base_ratio=0.25)
+        self.assertAlmostEqual(r_l1, 0.25)
+        # Final layer should equal 1.0 (conservative)
+        r_last = calculate_layer_retention_ratio(layer_idx=16, total_layers=16, base_ratio=0.25)
+        self.assertAlmostEqual(r_last, 1.0)
+        # Mid layer should be monotonically increasing
+        r_mid = calculate_layer_retention_ratio(layer_idx=8, total_layers=16, base_ratio=0.25)
+        self.assertTrue(0.25 < r_mid < 1.0)
+
+    def test_fourier_compress_activation_2d_roundtrip(self):
+        S, D = 128, 64
+        # Create a smooth low-frequency activation matrix
+        t_s = np.linspace(0, 2 * np.pi, S)[:, None]
+        t_d = np.linspace(0, 2 * np.pi, D)[None, :]
+        activation = (np.sin(t_s) + np.cos(t_d)).astype(np.float32)
+
+        core, orig_shape = fourier_compress_activation_2d(activation, seq_ratio=0.5, hidden_ratio=0.5)
+        self.assertEqual(core.shape, (64, 32))
+        self.assertEqual(orig_shape, (S, D))
+
+        reconstructed = fourier_decompress_activation_2d(core, orig_shape)
+        self.assertEqual(reconstructed.shape, (S, D))
+
+        # Mean squared error on low-frequency signal should be small
+        mse = np.mean((activation - reconstructed) ** 2)
+        self.assertLess(mse, 0.05)
+
 
 if __name__ == "__main__":
     unittest.main()
+
