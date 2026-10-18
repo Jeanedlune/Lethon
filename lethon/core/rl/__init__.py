@@ -12,6 +12,16 @@ from lethon.core.rl.cot_pruning import (
     ThoughtRedundancyAnalyzer,
     IterativePruningScheduler,
 )
+from lethon.core.rl.tprl import (
+    TokenWiseAutoencoder,
+    SharedAttentionModule,
+    TPRLPolicyNetwork,
+    TPRLValueNetwork,
+    TPRLPruner,
+    compute_tprl_reward,
+    compute_gae_advantage,
+    compute_lfd_loss,
+)
 
 __all__ = [
     "extract_answer_from_text",
@@ -20,4 +30,13 @@ __all__ = [
     "compute_group_relative_advantage",
     "ThoughtRedundancyAnalyzer",
     "IterativePruningScheduler",
+    "TokenWiseAutoencoder",
+    "SharedAttentionModule",
+    "TPRLPolicyNetwork",
+    "TPRLValueNetwork",
+    "TPRLPruner",
+    "compute_tprl_reward",
+    "compute_gae_advantage",
+    "compute_lfd_loss",
 ]
+
