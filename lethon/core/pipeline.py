@@ -196,25 +196,49 @@ class LethonPipeline:
                 "retained_ratio": 1.0
             }
 
-        # Semantic Anchors: Detect error patterns
-        error_pattern = re.compile(r'\b(error|fatal|exception|panic|traceback|failed|critical|assertion|warning)\b', re.IGNORECASE)
-        selected_indices = set()
+        # Algorithmic Anomaly Detection via SVD Subspace Residuals & Energy Spikes:
+        # Repetitive template logs (heartbeats, info pollings) collapse onto the dominant
+        # low-rank subspace (low reconstruction residual / low anomaly score).
+        # Rare events, error spikes, panics, and tracebacks exhibit high subspace residual
+        # energy and high semantic divergence.
+        features = self._extract_text_features(lines, dim=64)
+        
+        # Mean center features across log lines
+        feat_mean = np.mean(features, axis=0, keepdims=True)
+        feat_centered = features - feat_mean
+        
+        # SVD on log covariance: dominant patterns form the background normal template
+        try:
+            _, S, Vt = np.linalg.svd(feat_centered, full_matrices=False)
+            k = max(1, min(4, len(S)))
+            Vk = Vt[:k, :].T  # Low-rank dominant subspace (d, k)
+            # Reconstruct background projection
+            background_proj = (feat_centered @ Vk) @ Vk.T
+            residuals = np.linalg.norm(feat_centered - background_proj, axis=1)
+        except Exception:
+            # Fallback to feature norm deviation if SVD encounters degenerate matrix
+            residuals = np.linalg.norm(feat_centered, axis=1)
 
-        for idx, line in enumerate(lines):
-            if error_pattern.search(line):
-                # Add surrounding context window lines
-                window = max(context_window_lines, 4)
+        # Anomaly threshold: lines with high subspace deviation represent anomalous events
+        mean_res = float(np.mean(residuals))
+        std_res = float(np.std(residuals))
+        threshold = mean_res + 0.6 * std_res
+
+        selected_indices = set()
+        window = max(context_window_lines, 2)
+
+        for idx, score in enumerate(residuals):
+            if score >= threshold:
                 start = max(0, idx - window)
                 end = min(num_lines, idx + window + 1)
                 for i in range(start, end):
                     selected_indices.add(i)
 
-        # If very few errors found, also keep first 3 and last 3 lines
-        if len(selected_indices) < 10:
-            for i in range(min(5, num_lines)):
-                selected_indices.add(i)
-            for i in range(max(0, num_lines - 5), num_lines):
-                selected_indices.add(i)
+        # Retain head & tail log context (start-up & exit states)
+        for i in range(min(3, num_lines)):
+            selected_indices.add(i)
+        for i in range(max(0, num_lines - 3), num_lines):
+            selected_indices.add(i)
 
         sorted_indices = sorted(list(selected_indices))
         reconstructed_lines = []
@@ -295,10 +319,18 @@ class LethonPipeline:
         compression_ratio: float = 0.5,
         preservation_mode: str = "BALANCED",
     ) -> Tuple[str, Dict[str, Any]]:
-        """
-        Universal fallback adapter for general text or mixed content.
-        Routes to prune_code if code-like, or prune_logs if log-like.
-        """
-        if re.search(r'\b(ERROR|FATAL|EXCEPTION|TRACEBACK)\b', context_text, re.IGNORECASE):
+        # Algorithmic routing based on structural entropy and line length variance:
+        # Logs typically have repetitive timestamps, uniform indentation, or line-oriented flow,
+        # whereas code has hierarchical indentations, block syntax, and definitions.
+        lines = [ln for ln in context_text.splitlines() if ln.strip()]
+        if not lines:
+            return context_text, {"orig_tokens": 0, "compressed_tokens": 0, "savings_pct": 0.0, "latency_ms": 0.0, "retained_ratio": 1.0}
+
+        # Measure indentation variance: code has high indentation variance, logs have near-zero
+        indents = [len(l) - len(l.lstrip()) for l in lines]
+        indent_variance = float(np.var(indents)) if indents else 0.0
+
+        # If low indent variance and high line count, treat as log stream
+        if indent_variance < 1.5 and len(lines) > 15:
             return self.prune_logs(context_text)
         return self.prune_code(context_text, compression_ratio=compression_ratio)
